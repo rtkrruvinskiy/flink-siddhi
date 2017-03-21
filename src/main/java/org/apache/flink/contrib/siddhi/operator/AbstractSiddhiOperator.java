@@ -20,14 +20,13 @@ package org.apache.flink.contrib.siddhi.operator;
 import org.apache.flink.api.common.ExecutionConfig;
 import org.apache.flink.contrib.siddhi.exception.UndefinedStreamException;
 import org.apache.flink.contrib.siddhi.schema.StreamSchema;
+import org.apache.flink.contrib.siddhi.utils.EmittedTimestampTracker;
 import org.apache.flink.core.fs.FSDataInputStream;
 import org.apache.flink.core.fs.FSDataOutputStream;
 import org.apache.flink.core.memory.DataInputView;
 import org.apache.flink.core.memory.DataInputViewStreamWrapper;
 import org.apache.flink.core.memory.DataOutputView;
 import org.apache.flink.core.memory.DataOutputViewStreamWrapper;
-import org.apache.flink.runtime.state.CheckpointStreamFactory;
-import org.apache.flink.runtime.state.OperatorStateHandle;
 import org.apache.flink.streaming.api.TimeCharacteristic;
 import org.apache.flink.streaming.api.graph.StreamConfig;
 import org.apache.flink.streaming.api.operators.AbstractStreamOperator;
@@ -35,7 +34,7 @@ import org.apache.flink.streaming.api.operators.OneInputStreamOperator;
 import org.apache.flink.streaming.api.operators.Output;
 import org.apache.flink.streaming.api.operators.StreamCheckpointedOperator;
 import org.apache.flink.streaming.api.watermark.Watermark;
-import org.apache.flink.streaming.runtime.streamrecord.MultiplexingStreamRecordSerializer;
+import org.apache.flink.streaming.runtime.streamrecord.StreamElementSerializer;
 import org.apache.flink.streaming.runtime.streamrecord.StreamRecord;
 import org.apache.flink.streaming.runtime.tasks.StreamTask;
 import org.slf4j.Logger;
@@ -51,7 +50,6 @@ import java.io.ObjectOutputStream;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.PriorityQueue;
-import java.util.concurrent.RunnableFuture;
 
 /**
  * <h1>Siddhi Runtime Operator</h1>
@@ -84,17 +82,18 @@ import java.util.concurrent.RunnableFuture;
  * @param <OUT> Output Element Type
  */
 public abstract class AbstractSiddhiOperator<IN, OUT> extends AbstractStreamOperator<OUT> implements OneInputStreamOperator<IN, OUT>, StreamCheckpointedOperator {
-	private static final Logger LOGGER = LoggerFactory.getLogger(AbstractSiddhiOperator.class);
+	protected static final Logger LOGGER = LoggerFactory.getLogger(AbstractSiddhiOperator.class);
 	private static final int INITIAL_PRIORITY_QUEUE_CAPACITY = 11;
 
 	private final SiddhiOperatorContext siddhiPlan;
 	private final String executionExpression;
 	private final boolean isProcessingTime;
-	private final Map<String, MultiplexingStreamRecordSerializer<IN>> streamRecordSerializers;
+	private final Map<String, StreamElementSerializer<IN>> streamRecordSerializers;
 
 	private transient SiddhiManager siddhiManager;
 	private transient ExecutionPlanRuntime siddhiRuntime;
 	private transient Map<String, InputHandler> inputStreamHandlers;
+	private transient EmittedTimestampTracker emittedTimestampTracker;
 
 	// queue to buffer out of order stream records
 	private transient PriorityQueue<StreamRecord<IN>> priorityQueue;
@@ -121,9 +120,9 @@ public abstract class AbstractSiddhiOperator<IN, OUT> extends AbstractStreamOper
 		}
 	}
 
-	protected abstract MultiplexingStreamRecordSerializer<IN> createStreamRecordSerializer(StreamSchema streamSchema, ExecutionConfig executionConfig);
+	protected abstract StreamElementSerializer<IN> createStreamRecordSerializer(StreamSchema streamSchema, ExecutionConfig executionConfig);
 
-	protected MultiplexingStreamRecordSerializer<IN> getStreamRecordSerializer(String streamId) {
+	protected StreamElementSerializer<IN> getStreamRecordSerializer(String streamId) {
 		if (streamRecordSerializers.containsKey(streamId)) {
 			return streamRecordSerializers.get(streamId);
 		} else {
@@ -221,6 +220,7 @@ public abstract class AbstractSiddhiOperator<IN, OUT> extends AbstractStreamOper
 	 */
 	private void startSiddhiRuntime() {
 		if (this.siddhiRuntime == null) {
+			this.emittedTimestampTracker = new EmittedTimestampTracker();
 			this.siddhiManager = this.siddhiPlan.createSiddhiManager();
 			for (Map.Entry<String, Class<?>> entry : this.siddhiPlan.getExtensions().entrySet()) {
 				this.siddhiManager.setExtension(entry.getKey(), entry.getValue());
@@ -250,7 +250,7 @@ public abstract class AbstractSiddhiOperator<IN, OUT> extends AbstractStreamOper
 	@SuppressWarnings("unchecked")
 	private void registerInputAndOutput(ExecutionPlanRuntime runtime) {
 		AbstractDefinition definition = this.siddhiRuntime.getStreamDefinitionMap().get(this.siddhiPlan.getOutputStreamId());
-		runtime.addCallback(this.siddhiPlan.getOutputStreamId(), new StreamOutputHandler<>(this.siddhiPlan.getOutputStreamType(), definition, this.output));
+		runtime.addCallback(this.siddhiPlan.getOutputStreamId(), new StreamOutputHandler<>(this.siddhiPlan.getOutputStreamType(), definition, this.output, this.emittedTimestampTracker));
 		inputStreamHandlers = new HashMap<>();
 		for (String inputStreamId : this.siddhiPlan.getInputStreams()) {
 			inputStreamHandlers.put(inputStreamId, runtime.getInputHandler(inputStreamId));
@@ -258,11 +258,17 @@ public abstract class AbstractSiddhiOperator<IN, OUT> extends AbstractStreamOper
 	}
 
 	@Override
-	public void dispose() throws Exception {
-		LOGGER.info("Disposing");
-		super.dispose();
+	public void close() throws Exception {
+		// Try to wait for Siddhi to finish emitting all results
+		while (true) {
+			long lastEmittedTimestamp = emittedTimestampTracker.getTimestamp();
+			Thread.sleep(2000);
+			if (lastEmittedTimestamp == emittedTimestampTracker.getTimestamp()) {
+				break;
+			}
+		}
+		super.close();
 		shutdownSiddhiRuntime();
-		output.close();
 	}
 
 	@Override
@@ -279,11 +285,6 @@ public abstract class AbstractSiddhiOperator<IN, OUT> extends AbstractStreamOper
 		this.snapshotQueuerState(this.priorityQueue, new DataOutputViewStreamWrapper(oos));
 
 		oos.flush();
-	}
-
-	@Override
-	public RunnableFuture<OperatorStateHandle> snapshotState(long checkpointId, long timestamp, CheckpointStreamFactory streamFactory) throws Exception {
-		return super.snapshotState(checkpointId, timestamp, streamFactory);
 	}
 
 	@Override

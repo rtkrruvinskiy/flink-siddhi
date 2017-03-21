@@ -22,6 +22,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.flink.api.common.typeinfo.TypeInformation;
 import org.apache.flink.api.java.tuple.Tuple;
 import org.apache.flink.api.java.typeutils.PojoTypeInfo;
+import org.apache.flink.contrib.siddhi.utils.EmittedTimestampTracker;
 import org.apache.flink.contrib.siddhi.utils.SiddhiTupleFactory;
 import org.apache.flink.streaming.api.operators.Output;
 import org.apache.flink.streaming.runtime.streamrecord.StreamRecord;
@@ -45,19 +46,23 @@ public class StreamOutputHandler<R> extends StreamCallback {
 	private final Output<StreamRecord<R>> output;
 	private final TypeInformation<R> typeInfo;
 	private final ObjectMapper objectMapper;
+	private final EmittedTimestampTracker emittedTimestampTracker;
 
-	public StreamOutputHandler(TypeInformation<R> typeInfo, AbstractDefinition definition, Output<StreamRecord<R>> output) {
+	public StreamOutputHandler(TypeInformation<R> typeInfo, AbstractDefinition definition, Output<StreamRecord<R>> output,
+				EmittedTimestampTracker emittedTimestampTracker) {
 		this.typeInfo = typeInfo;
 		this.definition = definition;
 		this.output = output;
 		this.objectMapper = new ObjectMapper();
 		this.objectMapper.configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);
+		this.emittedTimestampTracker = emittedTimestampTracker;
 	}
 
 	@Override
 	public void receive(Event[] events) {
 		StreamRecord<R> reusableRecord = new StreamRecord<>(null, 0L);
 		for (Event event : events) {
+			emittedTimestampTracker.setTimestamp(event.getTimestamp());
 			if (typeInfo == null || Map.class.isAssignableFrom(typeInfo.getTypeClass())) {
 				reusableRecord.replace(toMap(event), event.getTimestamp());
 				output.collect(reusableRecord);

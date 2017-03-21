@@ -113,7 +113,7 @@ public class SiddhiTypeFactory {
 		return (TypeInformation<Map<String, Object>>) MAP_TYPE_INFORMATION;
 	}
 
-	public static <F> Attribute.Type getAttributeType(TypeInformation<F> fieldType) {
+	public static <F> Attribute.Type getAttributeType(TypeInformation fieldType) {
 		if (JAVA_TO_SIDDHI_TYPE.containsKey(fieldType.getTypeClass())) {
 			return JAVA_TO_SIDDHI_TYPE.get(fieldType.getTypeClass());
 		} else {
