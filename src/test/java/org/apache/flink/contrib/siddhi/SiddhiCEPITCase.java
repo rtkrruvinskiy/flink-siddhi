@@ -19,9 +19,8 @@ package org.apache.flink.contrib.siddhi;
 
 import org.apache.flink.api.common.functions.InvalidTypesException;
 import org.apache.flink.api.common.functions.MapFunction;
-import org.apache.flink.api.java.tuple.Tuple1;
-import org.apache.flink.api.java.tuple.Tuple4;
-import org.apache.flink.api.java.tuple.Tuple5;
+import org.apache.flink.api.java.functions.KeySelector;
+import org.apache.flink.api.java.tuple.*;
 import org.apache.flink.contrib.siddhi.exception.UndefinedStreamException;
 import org.apache.flink.contrib.siddhi.extension.CustomPlusFunctionExtension;
 import org.apache.flink.contrib.siddhi.source.Event;
@@ -32,13 +31,16 @@ import org.apache.flink.core.fs.FileSystem;
 import org.apache.flink.streaming.api.TimeCharacteristic;
 import org.apache.flink.streaming.api.datastream.DataStream;
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
+import org.apache.flink.streaming.api.functions.AssignerWithPunctuatedWatermarks;
 import org.apache.flink.streaming.api.functions.timestamps.AscendingTimestampExtractor;
+import org.apache.flink.streaming.api.watermark.Watermark;
 import org.apache.flink.streaming.util.StreamingMultipleProgramsTestBase;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
 
 import java.io.IOException;
+import java.util.ArrayList;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
@@ -371,5 +373,66 @@ public class SiddhiCEPITCase extends StreamingMultipleProgramsTestBase {
 		String resultPath = tempFolder.newFile().toURI().toString();
 		output.writeAsText(resultPath, FileSystem.WriteMode.OVERWRITE);
 		env.execute();
+	}
+
+	@Test
+	public void testSimpleKeyedPatternEventTime() throws Exception {
+		StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
+		env.setStreamTimeCharacteristic(TimeCharacteristic.EventTime);
+		env.setParallelism(2);
+
+		// ((id, name, price), timestamp)
+		DataStream<Event> input = env.fromElements(
+			Tuple2.of(Event.of(1, "start", 1.0), 5L),
+			Tuple2.of(Event.of(1, "middle", 2.0), 1L),
+			Tuple2.of(Event.of(2, "middle", 2.1), 4L),
+			Tuple2.of(Event.of(2, "start", 2.2), 3L),
+			Tuple2.of(Event.of(1, "end", 3.0), 3L),
+			Tuple2.of(Event.of(3, "start", 4.1), 5L),
+			Tuple2.of(Event.of(1, "end", 4.0), 10L),
+			Tuple2.of(Event.of(2, "end", 2.5), 8L),
+			Tuple2.of(Event.of(1, "middle", 5.0), 7L),
+			Tuple2.of(Event.of(3, "middle", 6.0), 9L),
+			Tuple2.of(Event.of(3, "end", 7.0), 7L)
+		).assignTimestampsAndWatermarks(new AssignerWithPunctuatedWatermarks<Tuple2<Event,Long>>() {
+
+			@Override
+			public long extractTimestamp(Tuple2<Event, Long> element, long currentTimestamp) {
+				return element.f1;
+			}
+
+			@Override
+			public Watermark checkAndGetNextWatermark(Tuple2<Event, Long> lastElement, long extractedTimestamp) {
+				return new Watermark(lastElement.f1 - 5);
+			}
+
+		}).map(new MapFunction<Tuple2<Event, Long>, Event>() {
+
+			@Override
+			public Event map(Tuple2<Event, Long> value) throws Exception {
+				return value.f0;
+			}
+		}).keyBy(new KeySelector<Event, Integer>() {
+
+			@Override
+			public Integer getKey(Event value) throws Exception {
+				return value.getId();
+			}
+		});
+
+		DataStream<Tuple6<Integer, Double, Integer, Double, Integer, Double>> output = SiddhiCEP
+			.define("inputStream", input, "id", "name", "price")
+			.cql("from e1 = inputStream[name=='start'] -> " +
+				"e2 = inputStream[name=='middle'] -> " +
+				"e3 = inputStream[name=='end'] " +
+				"select e1.id as e1_id, e1.price as e1_price, e2.id as e2_id, e2.price as e2_price, e3.id as e3_id, e3.price as e3_price " +
+				"insert into outputStream")
+			.returns("outputStream");
+		String path = tempFolder.newFile().toURI().toString();
+		output.writeAsText(path);
+		env.execute();
+		assertEquals(2, getLineCount(path));
+		compareResultsByLinesInMemory("(1,1.0,1,5.0,1,4.0)\n(2,2.2,2,2.1,2,2.5)",
+			path);
 	}
 }

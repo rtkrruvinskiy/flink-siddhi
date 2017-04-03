@@ -114,8 +114,11 @@ under the License.
                 </exclusion>
             </exclusions>
         </dependency>
-
-
+        <dependency>
+            <groupId>com.arcticwolf</groupId>
+            <artifactId>flink-event-time-order</artifactId>
+            <version>1.0-SNAPSHOT</version>
+        </dependency>
     </dependencies>
 
     <repositories>

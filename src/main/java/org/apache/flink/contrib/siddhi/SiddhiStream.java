@@ -30,6 +30,8 @@ import org.apache.flink.contrib.siddhi.utils.SiddhiTypeFactory;
 import org.apache.flink.streaming.api.datastream.DataStream;
 import org.apache.flink.streaming.api.datastream.KeyedStream;
 import org.apache.flink.util.Preconditions;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.util.Arrays;
 import java.util.LinkedList;
@@ -41,6 +43,8 @@ import java.util.Map;
  */
 @PublicEvolving
 public abstract class SiddhiStream {
+	protected static final Logger LOGGER = LoggerFactory.getLogger(SiddhiStream.class);
+
 	private final SiddhiCEP cepEnvironment;
 
 	/**
@@ -76,6 +80,7 @@ public abstract class SiddhiStream {
 			}
 		});
 		if (dataStream instanceof KeyedStream) {
+			LOGGER.info("convertDataStream on KeyedStream");
 			final KeySelector<T, Object> keySelector = ((KeyedStream<T, Object>) dataStream).getKeySelector();
 			final KeySelector<Tuple2<String, Object>, Object> keySelectorInClosure = new KeySelector<Tuple2<String, Object>, Object>() {
 				@Override
@@ -85,6 +90,7 @@ public abstract class SiddhiStream {
 			};
 			return resultStream.keyBy(keySelectorInClosure);
 		} else {
+			LOGGER.info("convertDataStream on Un-KeyedStream");
 			return resultStream;
 		}
 	}
