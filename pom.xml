@@ -36,7 +36,7 @@ under the License.
     <packaging>jar</packaging>
 
     <properties>
-        <siddhi.version>3.0.5</siddhi.version>
+        <siddhi.version>3.1.2</siddhi.version>
         <flink.version>1.2.0</flink.version>
     </properties>
 
