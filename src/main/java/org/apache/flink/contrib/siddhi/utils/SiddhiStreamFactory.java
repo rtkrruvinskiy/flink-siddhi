@@ -37,10 +37,8 @@ public class SiddhiStreamFactory {
 	@SuppressWarnings("unchecked")
 	public static <IN, OUT> DataStream<OUT> createDataStream(SiddhiOperatorContext context, DataStream<Tuple2<String, IN>> namedStream) {
 		if (namedStream instanceof KeyedStream) {
-			LOGGER.info("Calling createKeyedDataStream");
 			return createKeyedDataStream(context, namedStream);
 		} else {
-			LOGGER.info("createDataStream non-keyed");
 			return namedStream.transform(context.getName(), context.getOutputStreamType(), new SiddhiStreamOperator(context));
 		}
 	}
