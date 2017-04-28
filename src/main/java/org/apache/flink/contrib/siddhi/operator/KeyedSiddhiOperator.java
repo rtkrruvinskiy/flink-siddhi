@@ -47,7 +47,10 @@ public class KeyedSiddhiOperator<IN, KEY, OUT>
 	@Override
 	public void open() throws Exception {
 		super.open();
+		initializeTransientState();
+	}
 
+	private void initializeTransientState() {
 		if (runtimeMap == null) {
 			runtimeMap = new HashMap<>();
 		}
@@ -113,6 +116,7 @@ public class KeyedSiddhiOperator<IN, KEY, OUT>
 	public void restoreState(FSDataInputStream state) throws Exception {
 		super.restoreState(state);
 
+		initializeTransientState();
 		DataInputView inputView = new DataInputViewStreamWrapper(state);
 		int numberEntries = inputView.readInt();
 		for (int i = 0; i <numberEntries; i++) {
